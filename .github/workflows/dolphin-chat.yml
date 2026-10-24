@@ -15,7 +15,7 @@ jobs:
       - name: Install Ollama
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
-          OLLAMA_HOST=127.0.0.1:11434 ollama serve > ollama.log 2>&1 &
+          OLLAMA_HOST=127.0.0.1:11434 OLLAMA_ORIGINS='*' ollama serve > ollama.log 2>&1 &
           for i in {1..40}; do curl -fsS http://127.0.0.1:11434/api/tags >/dev/null && break; sleep 2; done
           curl -fsS http://127.0.0.1:11434/api/tags >/dev/null
       - name: Pull only dolphin-mistral
@@ -29,7 +29,9 @@ jobs:
           cloudflared tunnel --no-autoupdate --url http://127.0.0.1:11434 > tunnel.log 2>&1 &
           for i in {1..40}; do TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log | head -n 1 || true); [ -n "$TUNNEL_URL" ] && break; sleep 2; done
           if [ -z "${TUNNEL_URL:-}" ]; then cat tunnel.log; exit 1; fi
-          echo "Temporary API URL: $TUNNEL_URL"
+          echo "Temporary Ollama API URL: $TUNNEL_URL"
+          for i in {1..20}; do if curl -fsS "$TUNNEL_URL/api/tags" >/tmp/tags.json; then break; fi; sleep 2; done
+          cat /tmp/tags.json
           sed -i "s|__TUNNEL_URL__|$TUNNEL_URL|g" index.html
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'

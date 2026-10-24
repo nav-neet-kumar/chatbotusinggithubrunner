@@ -20,7 +20,9 @@ jobs:
           curl -fsS http://127.0.0.1:11434/api/tags >/dev/null
       - name: Pull only dolphin-mistral
         run: ollama pull dolphin-mistral
-      - name: Start temporary tunnel
+      - name: Start tunnel and publish UI URL
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           curl -fsSL -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
@@ -28,7 +30,13 @@ jobs:
           for i in {1..40}; do TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log | head -n 1 || true); [ -n "$TUNNEL_URL" ] && break; sleep 2; done
           if [ -z "${TUNNEL_URL:-}" ]; then cat tunnel.log; exit 1; fi
           echo "Temporary API URL: $TUNNEL_URL"
-          echo "Public API endpoint; stop this workflow when finished and do not send sensitive data."
+          sed -i "s|__TUNNEL_URL__|$TUNNEL_URL|g" index.html
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git commit -m 'Publish temporary Dolphin Mistral endpoint' || true
+          git push https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git HEAD:${GITHUB_REF_NAME}
+          echo 'Warning: this exposes the Ollama API publicly while the workflow runs. Stop the workflow when finished; do not send sensitive data.'
           sleep 3300
       - name: Diagnostics
         if: failure()

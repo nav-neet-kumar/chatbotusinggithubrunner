@@ -17,14 +17,14 @@ form{padding:14px;background:#fff;border-top:1px solid #ddd;display:flex;gap:8px
 <main id="chat"><div class="msg bot">Hello! Start the GitHub Actions workflow to bring the temporary model server online.</div></main>
 <form id="form"><input id="prompt" autocomplete="off" placeholder="Message Dolphin Mistral…" disabled><button id="send" disabled>Send</button></form>
 <script>
-const API_URL="__TUNNEL_URL__";
+const API_URL="https://accuracy-bali-mainstream-furnished.trycloudflare.com";
 const MODEL="dolphin-mistral";
 const chat=document.querySelector('#chat'),input=document.querySelector('#prompt'),send=document.querySelector('#send'),status=document.querySelector('#status');
 const messages=[];
 function add(t,r){const e=document.createElement('div');e.className='msg '+(r==='user'?'user':'bot');e.textContent=t;chat.appendChild(e);chat.scrollTop=chat.scrollHeight;return e}
 function setOnline(online,detail){status.textContent=online?'Online · '+MODEL+' · temporary session':detail;input.disabled=!online;send.disabled=!online}
 async function checkApi(){
- if(!API_URL.startsWith('https://')||API_URL.includes('__TUNNEL_URL__')){setOnline(false,'Waiting for a new GitHub Actions tunnel…');return}
+ if(!API_URL.startsWith('https://')||API_URL.includes('https://accuracy-bali-mainstream-furnished.trycloudflare.com')){setOnline(false,'Waiting for a new GitHub Actions tunnel…');return}
  setOnline(false,'Checking temporary model server…');
  try{const r=await fetch(API_URL+'/api/tags',{method:'GET',cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const d=await r.json();if(!(d.models||[]).some(m=>(m.name||'').startsWith(MODEL)))throw Error('Model not found on server');setOnline(true,'')}
  catch(e){setOnline(false,'Offline · tunnel not reachable ('+e.message+')')}

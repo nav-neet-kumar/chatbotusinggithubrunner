@@ -6,86 +6,178 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: dolphin-mistral-temporary-chat
+  cancel-in-progress: true
+
 jobs:
   chat:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Ollama
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install and start Ollama
+        shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
           curl -fsSL https://ollama.com/install.sh | sh
           OLLAMA_HOST=127.0.0.1:11434 OLLAMA_ORIGINS='*' ollama serve > ollama.log 2>&1 &
-          for i in {1..40}; do
-            if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null; then break; fi
+          echo $! > ollama.pid
+
+          for i in {1..60}; do
+            if curl --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:11434/api/tags >/dev/null; then
+              echo 'Ollama API is ready on 127.0.0.1:11434.'
+              exit 0
+            fi
             sleep 2
           done
-          curl -fsS http://127.0.0.1:11434/api/tags >/dev/null
-      - name: Pull only dolphin-mistral
-        run: ollama pull dolphin-mistral
-      - name: Start tunnel and publish UI URL
+
+          echo 'Ollama did not become ready.'
+          cat ollama.log || true
+          exit 1
+
+      - name: Download Dolphin Mistral model
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ollama pull dolphin-mistral
+          ollama show dolphin-mistral >/dev/null
+          echo 'dolphin-mistral is installed.'
+
+      - name: Install Cloudflare Tunnel
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+            -o cloudflared.deb \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+          cloudflared --version
+
+      - name: Start tunnel, verify API, and publish chat page
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          curl -fsSL -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared.deb
-          cloudflared tunnel --no-autoupdate --http-host-header 127.0.0.1:11434 --url http://127.0.0.1:11434 > tunnel.log 2>&1 &
-          for i in {1..40}; do
+          set -Eeuo pipefail
+
+          # Confirm the model API locally before exposing it.
+          LOCAL_TAGS=$(curl --connect-timeout 3 --max-time 10 -fsS http://127.0.0.1:11434/api/tags)
+          echo "$LOCAL_TAGS" | grep -q 'dolphin-mistral' || {
+            echo 'The local Ollama API does not list dolphin-mistral.'
+            exit 1
+          }
+
+          # Start a temporary HTTPS Quick Tunnel to the Ollama API.
+          cloudflared tunnel --no-autoupdate --protocol http2 \
+            --http-host-header 127.0.0.1:11434 \
+            --url http://127.0.0.1:11434 > tunnel.log 2>&1 &
+          echo $! > cloudflared.pid
+
+          TUNNEL_URL=''
+          for i in {1..60}; do
             TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log | head -n 1 || true)
-            [ -n "${TUNNEL_URL:-}" ] && break
+            if [ -n "$TUNNEL_URL" ]; then break; fi
+            if ! kill -0 "$(cat cloudflared.pid)" 2>/dev/null; then
+              echo 'cloudflared exited before creating a tunnel.'
+              cat tunnel.log
+              exit 1
+            fi
             sleep 2
           done
-          if [ -z "${TUNNEL_URL:-}" ]; then cat tunnel.log; exit 1; fi
-          echo "Temporary Ollama API URL: $TUNNEL_URL"
 
-          # Give Quick Tunnel DNS time to propagate; do not publish until API is verified.
-          HEALTHY=0
-          for i in {1..40}; do
-            HTTP_CODE=$(curl --connect-timeout 5 --max-time 12 -sS -o /tmp/tags.json -w '%{http_code}' "$TUNNEL_URL/api/tags" || true)
-            if [ "$HTTP_CODE" = "200" ] && grep -q 'dolphin-mistral' /tmp/tags.json; then HEALTHY=1; break; fi
-            echo "Tunnel health attempt $i returned HTTP ${HTTP_CODE:-no-response}; retrying DNS/API readiness..."
-            sleep 5
-          done
-          if [ "$HEALTHY" != "1" ]; then
-            echo 'Tunnel API health check failed; refusing to publish a broken endpoint.'
+          if [ -z "$TUNNEL_URL" ]; then
+            echo 'Cloudflare did not provide a Quick Tunnel URL.'
             cat tunnel.log
-            cat /tmp/tags.json || true
             exit 1
           fi
-          echo 'Tunnel API health check passed.'
-          cat /tmp/tags.json
+          echo "Quick Tunnel created: $TUNNEL_URL"
+
+          # Retry DNS and HTTPS until the public URL actually serves our model.
+          # Delete the response file each time so a failed curl can never reuse stale JSON.
+          HEALTHY=0
+          for i in {1..60}; do
+            rm -f /tmp/ollama-public-tags.json
+            HTTP_CODE=$(curl --connect-timeout 5 --max-time 15 \
+              --retry 1 --retry-all-errors --retry-delay 2 \
+              -sS -o /tmp/ollama-public-tags.json -w '%{http_code}' \
+              "$TUNNEL_URL/api/tags" || true)
+
+            if [ "$HTTP_CODE" = '200' ] && \
+               grep -q 'dolphin-mistral' /tmp/ollama-public-tags.json; then
+              HEALTHY=1
+              break
+            fi
+
+            echo "Public API check $i/60: HTTP ${HTTP_CODE:-000}; waiting for DNS/tunnel readiness."
+            sleep 5
+          done
+
+          if [ "$HEALTHY" != '1' ]; then
+            echo 'Public tunnel never passed its health check. The endpoint will NOT be published.'
+            echo '--- cloudflared log ---'
+            cat tunnel.log || true
+            echo '--- Ollama log ---'
+            cat ollama.log || true
+            exit 1
+          fi
+
+          echo 'PASS: public HTTPS endpoint returns dolphin-mistral.'
+          cat /tmp/ollama-public-tags.json
 
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
-          # Avoid overwriting a newer Pages/workflow commit: sync main, then apply URL.
-          for attempt in {1..4}; do
+          # Sync the newest main before every push. This protects concurrent Pages
+          # deployment commits and other workflow changes from being overwritten.
+          PUBLISHED=0
+          for attempt in {1..5}; do
             git fetch origin "$GITHUB_REF_NAME"
             git reset --hard "origin/$GITHUB_REF_NAME"
-            sed -i -E "s|https://[A-Za-z0-9.-]+\\.trycloudflare\\.com|$TUNNEL_URL|g; s|__TUNNEL_URL__|$TUNNEL_URL|g" index.html
-            git add index.html
-            if git diff --cached --quiet; then
-              echo 'The current HTML already contains this endpoint.'
-            else
-              git commit -m 'Publish temporary Dolphin Mistral endpoint'
-            fi
-            if git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"; then
-              echo 'Published the verified temporary endpoint.'
-              break
-            fi
-            if [ "$attempt" = "4" ]; then
-              echo 'Could not push after four attempts because main kept changing.'
+
+            # Replace either the placeholder or a URL from an earlier run.
+            sed -i -E \
+              "s|https://[A-Za-z0-9.-]+\\.trycloudflare\\.com|$TUNNEL_URL|g; s|__TUNNEL_URL__|$TUNNEL_URL|g" \
+              index.html
+
+            if ! grep -Fq "const API_URL=\"$TUNNEL_URL\";" index.html; then
+              echo 'Could not verify that index.html contains the current tunnel URL.'
               exit 1
             fi
-            echo "Push raced with another commit; retrying from latest main (attempt $((attempt+1))/4)."
-            sleep 2
+
+            git add index.html
+            if ! git diff --cached --quiet; then
+              git commit -m 'Publish verified temporary Dolphin Mistral endpoint'
+            else
+              echo 'index.html already contains the current verified endpoint.'
+            fi
+
+            if git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"; then
+              PUBLISHED=1
+              echo "Published verified endpoint to GitHub Pages source: $TUNNEL_URL"
+              break
+            fi
+
+            echo "Push raced with another main commit (attempt $attempt/5); syncing and retrying."
+            sleep 3
           done
-          echo 'Warning: this exposes the Ollama API publicly while the workflow runs. Stop the workflow when finished; do not send sensitive data.'
+
+          if [ "$PUBLISHED" != '1' ]; then
+            echo 'Could not publish after five attempts.'
+            exit 1
+          fi
+
+          echo 'The temporary Ollama API is publicly reachable while this workflow runs.'
+          echo 'Do not send secrets or personal data. Cancel this workflow when finished.'
           sleep 3300
-      - name: Diagnostics
+
+      - name: Diagnostics on failure
         if: failure()
+        shell: bash
         run: |
+          echo '--- Ollama log ---'
           cat ollama.log || true
+          echo '--- Cloudflare tunnel log ---'
           cat tunnel.log || true

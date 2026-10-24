@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Dolphin Mistral Chat</title>
+<style>
+:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;font:16px system-ui,-apple-system,Segoe UI,sans-serif;background:#f6f7f9;color:#16181d;display:flex;flex-direction:column;height:100dvh}
+header{padding:16px;text-align:center;background:#fff;border-bottom:1px solid #ddd}h1{font-size:20px;margin:0}#status{font-size:13px;color:#666;margin-top:5px}
+#chat{width:min(850px,100%);margin:0 auto;padding:18px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:85%;padding:12px 15px;border-radius:14px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}.user{align-self:flex-end;background:#1769e0;color:#fff}.bot{align-self:flex-start;background:#e5e7eb}
+form{padding:14px;background:#fff;border-top:1px solid #ddd;display:flex;gap:8px;justify-content:center}input{width:min(700px,80%);padding:13px;border:1px solid #bbb;border-radius:10px;font:inherit}button{padding:12px 18px;border:0;border-radius:10px;background:#1769e0;color:#fff;font-weight:600;cursor:pointer}button:disabled,input:disabled{opacity:.55;cursor:not-allowed}
+#foot{font-size:11px;color:#777;text-align:center;padding:0 12px 8px}
+</style>
+</head>
+<body>
+<header><h1>Dolphin Mistral Chat</h1><div id="status">Connecting to the current temporary model server…</div></header>
+<main id="chat"><div class="msg bot">Connecting to Dolphin Mistral. This page automatically loads the latest endpoint and retries if the tunnel is still starting.</div></main>
+<form id="form"><input id="prompt" autocomplete="off" placeholder="Message Dolphin Mistral…" disabled><button id="send" disabled>Send</button></form>
+<div id="foot">Temporary session · Do not enter passwords, secrets, or sensitive personal data.</div>
+<script>
+const MODEL='dolphin-mistral';
+const chat=document.querySelector('#chat'),input=document.querySelector('#prompt'),send=document.querySelector('#send'),status=document.querySelector('#status');
+let API_URL='',busy=false,checking=false;
+const messages=[];
+function add(t,r){const e=document.createElement('div');e.className='msg '+(r==='user'?'user':'bot');e.textContent=t;chat.appendChild(e);chat.scrollTop=chat.scrollHeight;return e}
+function setOnline(online,detail){status.textContent=online?'Online · '+MODEL+' · temporary session':detail;input.disabled=!online||busy;send.disabled=!online||busy}
+async function loadCurrentEndpoint(){
+  // Fetch the current index with a unique query parameter to bypass stale Pages/browser caches.
+  const configUrl=new URL('index.html',window.location.href);
+  configUrl.searchParams.set('endpoint_refresh',Date.now().toString());
+  const r=await fetch(configUrl.href,{cache:'no-store',headers:{'Cache-Control':'no-cache'}});
+  if(!r.ok)throw Error('Could not load current chat configuration (HTTP '+r.status+')');
+  const html=await r.text();
+  const match=html.match(/const API_URL="(https:\/\/[^"]+\.trycloudflare\.com)";/);
+  if(!match)throw Error('No active tunnel URL has been published yet');
+  API_URL=match[1];
+}
+async function checkApi(){
+  if(checking)return;checking=true;
+  try{
+    if(!API_URL)await loadCurrentEndpoint();
+    const r=await fetch(API_URL+'/api/tags',{method:'GET',cache:'no-store'});
+    if(!r.ok)throw Error('HTTP '+r.status);
+    const d=await r.json();
+    if(!(d.models||[]).some(m=>(m.name||'').startsWith(MODEL)))throw Error('Model not found on server');
+    setOnline(true,'');
+  }catch(e){setOnline(false,'Connecting… '+e.message)}
+  finally{checking=false}
+}
+document.querySelector('#form').addEventListener('submit',async e=>{
+  e.preventDefault();const t=input.value.trim();if(!t||input.disabled||!API_URL)return;
+  input.value='';busy=true;setOnline(true,'');messages.push({role:'user',content:t});add(t,'user');const reply=add('Thinking…','assistant');
+  try{
+    const r=await fetch(API_URL+'/api/chat',{method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify({model:MODEL,messages,stream:false})});
+    if(!r.ok)throw Error('HTTP '+r.status);
+    const d=await r.json(),a=d.message?.content||'No response returned.';
+    reply.textContent=a;messages.push({role:'assistant',content:a});
+  }catch(err){reply.textContent='Chat request failed: '+err.message+'. Retrying connection…';API_URL='';}
+  finally{busy=false;await checkApi()}
+});
+checkApi();
+setInterval(()=>{if(!busy)checkApi()},10000);
+</script>
+</body>
+</html>

@@ -39,7 +39,8 @@ jobs:
           done
           if [ "$HEALTHY" != "1" ]; then echo 'Tunnel API health check failed; refusing to publish a broken endpoint.'; cat tunnel.log; cat /tmp/tags.json || true; exit 1; fi
           cat /tmp/tags.json
-          sed -i "s|__TUNNEL_URL__|$TUNNEL_URL|g" index.html
+          # Replace both the original placeholder and any URL published by a previous run.
+          sed -i -E "s|https://[A-Za-z0-9.-]+\\.trycloudflare\\.com|$TUNNEL_URL|g; s|__TUNNEL_URL__|$TUNNEL_URL|g" index.html
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add index.html

@@ -190,14 +190,14 @@ jobs:
               "s|https://[A-Za-z0-9.-]+\\.trycloudflare\\.com|$TUNNEL_URL|g; s|__TUNNEL_URL__|$TUNNEL_URL|g" \
               index.html
 
-            if ! grep -Fq "const API_URL=\"$TUNNEL_URL\";" index.html; then
-              echo 'Failed to place the current verified endpoint in index.html.'
+            if ! grep -Fq "const PUBLISHED_API_URL = \"$TUNNEL_URL\";" index.html; then
+              echo 'Failed to place the current verified endpoint in the root index.html.'
               exit 1
             fi
 
             git add index.html
             if ! git diff --cached --quiet; then
-              git commit -m 'Publish verified temporary Dolphin Mistral endpoint'
+              git commit -m 'Publish verified temporary Dolphin Mistral endpoint for root page'
             fi
 
             if git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"; then

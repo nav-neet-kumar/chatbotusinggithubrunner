@@ -26,11 +26,18 @@ jobs:
         run: |
           curl -fsSL -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
-          cloudflared tunnel --no-autoupdate --url http://127.0.0.1:11434 > tunnel.log 2>&1 &
+          cloudflared tunnel --no-autoupdate --http-host-header 127.0.0.1:11434 --url http://127.0.0.1:11434 > tunnel.log 2>&1 &
           for i in {1..40}; do TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log | head -n 1 || true); [ -n "$TUNNEL_URL" ] && break; sleep 2; done
           if [ -z "${TUNNEL_URL:-}" ]; then cat tunnel.log; exit 1; fi
           echo "Temporary Ollama API URL: $TUNNEL_URL"
-          for i in {1..20}; do if curl -fsS "$TUNNEL_URL/api/tags" >/tmp/tags.json; then break; fi; sleep 2; done
+          HEALTHY=0
+          for i in {1..30}; do
+            HTTP_CODE=$(curl -sS -o /tmp/tags.json -w '%{http_code}' "$TUNNEL_URL/api/tags" || true)
+            if [ "$HTTP_CODE" = "200" ] && grep -q 'dolphin-mistral' /tmp/tags.json; then HEALTHY=1; break; fi
+            echo "Tunnel health attempt $i returned HTTP ${HTTP_CODE:-no-response}"
+            sleep 3
+          done
+          if [ "$HEALTHY" != "1" ]; then echo 'Tunnel API health check failed; refusing to publish a broken endpoint.'; cat tunnel.log; cat /tmp/tags.json || true; exit 1; fi
           cat /tmp/tags.json
           sed -i "s|__TUNNEL_URL__|$TUNNEL_URL|g" index.html
           git config user.name 'github-actions[bot]'

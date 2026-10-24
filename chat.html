@@ -33,8 +33,8 @@ async function loadCurrentEndpoint(){
   const r=await fetch(configUrl.href,{cache:'no-store',headers:{'Cache-Control':'no-cache'}});
   if(!r.ok)throw Error('Could not load current chat configuration (HTTP '+r.status+')');
   const html=await r.text();
-  const match=html.match(/const API_URL="(https:\/\/[^"]+\.trycloudflare\.com)";/);
-  if(!match)throw Error('No active tunnel URL has been published yet');
+  const match=html.match(/const PUBLISHED_API_URL\s*=\s*"(https:\/\/[^"]+\.trycloudflare\.com|__TUNNEL_URL__)";/);
+  if(!match||match[1]==='__TUNNEL_URL__')throw Error('No active tunnel URL has been published yet');
   API_URL=match[1];
 }
 async function checkApi(){
@@ -46,7 +46,7 @@ async function checkApi(){
     const d=await r.json();
     if(!(d.models||[]).some(m=>(m.name||'').startsWith(MODEL)))throw Error('Model not found on server');
     setOnline(true,'');
-  }catch(e){setOnline(false,'Connecting… '+e.message)}
+  }catch(e){API_URL='';setOnline(false,'Connecting… '+e.message)}
   finally{checking=false}
 }
 document.querySelector('#form').addEventListener('submit',async e=>{

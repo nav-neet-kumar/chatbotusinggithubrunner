@@ -2,6 +2,12 @@ name: Dolphin Mistral Temporary Chat
 
 on:
   workflow_dispatch:
+  # Automatically run the repaired workflow when this workflow file is updated.
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/dolphin-chat.yml
 
 permissions:
   contents: write
@@ -18,13 +24,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install and start Ollama
+      - name: Install Ollama and configure browser access
         shell: bash
         run: |
           set -Eeuo pipefail
-          curl -fsSL https://ollama.com/install.sh | sh
-          OLLAMA_HOST=127.0.0.1:11434 OLLAMA_ORIGINS='*' ollama serve > ollama.log 2>&1 &
-          echo $! > ollama.pid
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 https://ollama.com/install.sh | sh
+
+          # The Linux installer commonly creates a systemd service. Configure that
+          # service itself so the process actually serving port 11434 has CORS enabled.
+          if command -v systemctl >/dev/null 2>&1 && sudo systemctl cat ollama.service >/dev/null 2>&1; then
+            sudo mkdir -p /etc/systemd/system/ollama.service.d
+            printf '%s\n' \
+              '[Service]' \
+              'Environment="OLLAMA_HOST=127.0.0.1:11434"' \
+              'Environment="OLLAMA_ORIGINS=*"' \
+              | sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null
+            sudo systemctl daemon-reload
+            sudo systemctl restart ollama
+            echo 'Ollama configured through its systemd service with browser CORS enabled.'
+          else
+            # Fallback for runners without the installer-managed systemd service.
+            OLLAMA_HOST=127.0.0.1:11434 OLLAMA_ORIGINS='*' ollama serve > ollama.log 2>&1 &
+            echo $! > ollama.pid
+          fi
 
           for i in {1..60}; do
             if curl --connect-timeout 2 --max-time 5 -fsS http://127.0.0.1:11434/api/tags >/dev/null; then
@@ -33,18 +55,37 @@ jobs:
             fi
             sleep 2
           done
-
           echo 'Ollama did not become ready.'
+          sudo journalctl -u ollama --no-pager -n 100 || true
           cat ollama.log || true
           exit 1
 
-      - name: Download Dolphin Mistral model
+      - name: Download Dolphin Mistral
         shell: bash
         run: |
           set -Eeuo pipefail
           ollama pull dolphin-mistral
           ollama show dolphin-mistral >/dev/null
           echo 'dolphin-mistral is installed.'
+
+      - name: Verify local chat API before exposing it
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          CHAT_REQUEST='{"model":"dolphin-mistral","messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false}'
+          rm -f /tmp/local-chat.json
+          HTTP_CODE=$(curl --connect-timeout 5 --max-time 240 -sS \
+            -o /tmp/local-chat.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data "$CHAT_REQUEST" http://127.0.0.1:11434/api/chat || true)
+          if [ "$HTTP_CODE" != '200' ] || ! jq -e '.message.content | strings | length > 0' /tmp/local-chat.json >/dev/null; then
+            echo "Local /api/chat smoke test failed with HTTP ${HTTP_CODE:-000}."
+            cat /tmp/local-chat.json || true
+            sudo journalctl -u ollama --no-pager -n 100 || true
+            cat ollama.log || true
+            exit 1
+          fi
+          echo 'PASS: local /api/chat generated a response.'
 
       - name: Install Cloudflare Tunnel
         shell: bash
@@ -56,21 +97,19 @@ jobs:
           sudo dpkg -i cloudflared.deb
           cloudflared --version
 
-      - name: Start tunnel, verify API, and publish chat page
+      - name: Start tunnel, verify public chat, and publish page
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
 
-          # Confirm the model API locally before exposing it.
           LOCAL_TAGS=$(curl --connect-timeout 3 --max-time 10 -fsS http://127.0.0.1:11434/api/tags)
           echo "$LOCAL_TAGS" | grep -q 'dolphin-mistral' || {
             echo 'The local Ollama API does not list dolphin-mistral.'
             exit 1
           }
 
-          # Start a temporary HTTPS Quick Tunnel to the Ollama API.
           cloudflared tunnel --no-autoupdate --protocol http2 \
             --http-host-header 127.0.0.1:11434 \
             --url http://127.0.0.1:11434 > tunnel.log 2>&1 &
@@ -87,7 +126,6 @@ jobs:
             fi
             sleep 2
           done
-
           if [ -z "$TUNNEL_URL" ]; then
             echo 'Cloudflare did not provide a Quick Tunnel URL.'
             cat tunnel.log
@@ -95,72 +133,79 @@ jobs:
           fi
           echo "Quick Tunnel created: $TUNNEL_URL"
 
-          # Retry DNS and HTTPS until the public URL actually serves our model.
-          # Delete the response file each time so a failed curl can never reuse stale JSON.
+          # Wait for DNS and the HTTPS path to become available. Never reuse stale JSON.
           HEALTHY=0
           for i in {1..60}; do
-            rm -f /tmp/ollama-public-tags.json
-            HTTP_CODE=$(curl --connect-timeout 5 --max-time 15 \
-              --retry 1 --retry-all-errors --retry-delay 2 \
-              -sS -o /tmp/ollama-public-tags.json -w '%{http_code}' \
+            rm -f /tmp/public-tags.json
+            HTTP_CODE=$(curl --connect-timeout 5 --max-time 15 --retry 1 --retry-all-errors --retry-delay 2 \
+              -sS -o /tmp/public-tags.json -w '%{http_code}' \
               "$TUNNEL_URL/api/tags" || true)
-
-            if [ "$HTTP_CODE" = '200' ] && \
-               grep -q 'dolphin-mistral' /tmp/ollama-public-tags.json; then
+            if [ "$HTTP_CODE" = '200' ] && grep -q 'dolphin-mistral' /tmp/public-tags.json; then
               HEALTHY=1
               break
             fi
-
-            echo "Public API check $i/60: HTTP ${HTTP_CODE:-000}; waiting for DNS/tunnel readiness."
+            echo "Public API readiness check $i/60: HTTP ${HTTP_CODE:-000}; retrying."
             sleep 5
           done
-
           if [ "$HEALTHY" != '1' ]; then
-            echo 'Public tunnel never passed its health check. The endpoint will NOT be published.'
-            echo '--- cloudflared log ---'
+            echo 'Public API health check failed; endpoint will not be published.'
             cat tunnel.log || true
-            echo '--- Ollama log ---'
+            sudo journalctl -u ollama --no-pager -n 100 || true
             cat ollama.log || true
             exit 1
           fi
+          echo 'PASS: public HTTPS /api/tags returned dolphin-mistral.'
 
-          echo 'PASS: public HTTPS endpoint returns dolphin-mistral.'
-          cat /tmp/ollama-public-tags.json
+          # Test the exact text/plain POST used by index.html and a GitHub Pages Origin.
+          CHAT_REQUEST='{"model":"dolphin-mistral","messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false}'
+          rm -f /tmp/public-chat.json /tmp/public-chat.headers
+          CHAT_CODE=$(curl --connect-timeout 5 --max-time 240 -sS \
+            -D /tmp/public-chat.headers -o /tmp/public-chat.json -w '%{http_code}' \
+            -H 'Origin: https://nav-neet-kumar.github.io' \
+            -H 'Content-Type: text/plain;charset=UTF-8' \
+            --data "$CHAT_REQUEST" "$TUNNEL_URL/api/chat" || true)
+          if [ "$CHAT_CODE" != '200' ] || ! jq -e '.message.content | strings | length > 0' /tmp/public-chat.json >/dev/null; then
+            echo "Public /api/chat smoke test failed with HTTP ${CHAT_CODE:-000}."
+            cat /tmp/public-chat.json || true
+            cat /tmp/public-chat.headers || true
+            cat tunnel.log || true
+            exit 1
+          fi
+          if ! grep -qiE '^access-control-allow-origin: (\*|https://nav-neet-kumar\.github\.io)[[:space:]]*$' /tmp/public-chat.headers; then
+            echo 'Public chat response does not include the expected CORS allow-origin header.'
+            cat /tmp/public-chat.headers
+            exit 1
+          fi
+          echo 'PASS: public /api/chat generated a response and returned the expected CORS header.'
 
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
-          # Sync the newest main before every push. This protects concurrent Pages
-          # deployment commits and other workflow changes from being overwritten.
+          # Sync latest main before each push so a Pages build or concurrent commit is safe.
           PUBLISHED=0
           for attempt in {1..5}; do
             git fetch origin "$GITHUB_REF_NAME"
             git reset --hard "origin/$GITHUB_REF_NAME"
-
-            # Replace either the placeholder or a URL from an earlier run.
             sed -i -E \
               "s|https://[A-Za-z0-9.-]+\\.trycloudflare\\.com|$TUNNEL_URL|g; s|__TUNNEL_URL__|$TUNNEL_URL|g" \
               index.html
 
             if ! grep -Fq "const API_URL=\"$TUNNEL_URL\";" index.html; then
-              echo 'Could not verify that index.html contains the current tunnel URL.'
+              echo 'Failed to place the current verified endpoint in index.html.'
               exit 1
             fi
 
             git add index.html
             if ! git diff --cached --quiet; then
               git commit -m 'Publish verified temporary Dolphin Mistral endpoint'
-            else
-              echo 'index.html already contains the current verified endpoint.'
             fi
 
             if git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"; then
               PUBLISHED=1
-              echo "Published verified endpoint to GitHub Pages source: $TUNNEL_URL"
+              echo "Published verified chat endpoint: $TUNNEL_URL"
               break
             fi
-
-            echo "Push raced with another main commit (attempt $attempt/5); syncing and retrying."
+            echo "Push race (attempt $attempt/5); syncing and retrying."
             sleep 3
           done
 
@@ -169,15 +214,16 @@ jobs:
             exit 1
           fi
 
-          echo 'The temporary Ollama API is publicly reachable while this workflow runs.'
-          echo 'Do not send secrets or personal data. Cancel this workflow when finished.'
+          echo 'The temporary Ollama API is public while this workflow runs. Do not submit sensitive data.'
           sleep 3300
 
       - name: Diagnostics on failure
         if: failure()
         shell: bash
         run: |
-          echo '--- Ollama log ---'
+          echo '--- Ollama service ---'
+          sudo journalctl -u ollama --no-pager -n 100 || true
+          echo '--- Ollama process log (fallback mode) ---'
           cat ollama.log || true
           echo '--- Cloudflare tunnel log ---'
           cat tunnel.log || true

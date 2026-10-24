@@ -32,7 +32,7 @@ async function checkApi(){
 document.querySelector('#form').addEventListener('submit',async e=>{
  e.preventDefault();const t=input.value.trim();if(!t||input.disabled)return;input.value='';input.disabled=true;send.disabled=true;
  messages.push({role:'user',content:t});add(t,'user');const reply=add('Thinking…','assistant');
- try{const r=await fetch(API_URL+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:MODEL,messages,stream:false})});if(!r.ok)throw Error('HTTP '+r.status);const d=await r.json(),a=d.message?.content||'No response returned.';reply.textContent=a;messages.push({role:'assistant',content:a});setOnline(true,'')}
+ try{const r=await fetch(API_URL+'/api/chat',{method:'POST',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify({model:MODEL,messages,stream:false})});if(!r.ok)throw Error('HTTP '+r.status);const d=await r.json(),a=d.message?.content||'No response returned.';reply.textContent=a;messages.push({role:'assistant',content:a});setOnline(true,'')}
  catch(err){reply.textContent='Could not reach temporary model server: '+err.message+'. Check the latest GitHub Actions run.';setOnline(false,'Offline · tunnel not reachable')}
 });
 checkApi();

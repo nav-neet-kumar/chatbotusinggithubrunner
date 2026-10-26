@@ -60,7 +60,7 @@ jobs:
           cat ollama.log || true
           exit 1
 
-      - name: Download Dolphin Mistral
+      - name: Download Bonsai 2 Uncensored 27B
         shell: bash
         run: |
           set -Eeuo pipefail

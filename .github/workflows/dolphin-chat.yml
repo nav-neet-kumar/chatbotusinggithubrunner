@@ -1,4 +1,4 @@
-name: Dolphin Mistral Temporary Chat
+name: Bonsai 2 Uncensored 27B Chat
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: dolphin-mistral-temporary-chat
+  group: eriktonon/bonsai-2-uncensored:27b-temporary-chat
   cancel-in-progress: true
 
 jobs:
@@ -64,15 +64,15 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          ollama pull dolphin-mistral
-          ollama show dolphin-mistral >/dev/null
-          echo 'dolphin-mistral is installed.'
+          ollama pull eriktonon/bonsai-2-uncensored:27b
+          ollama show eriktonon/bonsai-2-uncensored:27b >/dev/null
+          echo 'eriktonon/bonsai-2-uncensored:27b is installed.'
 
       - name: Verify local chat API before exposing it
         shell: bash
         run: |
           set -Eeuo pipefail
-          CHAT_REQUEST='{"model":"dolphin-mistral","messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false}'
+          CHAT_REQUEST='{"model":"eriktonon/bonsai-2-uncensored:27b","messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false}'
           rm -f /tmp/local-chat.json
           HTTP_CODE=$(curl --connect-timeout 5 --max-time 240 -sS \
             -o /tmp/local-chat.json -w '%{http_code}' \
@@ -105,8 +105,8 @@ jobs:
           set -Eeuo pipefail
 
           LOCAL_TAGS=$(curl --connect-timeout 3 --max-time 10 -fsS http://127.0.0.1:11434/api/tags)
-          echo "$LOCAL_TAGS" | grep -q 'dolphin-mistral' || {
-            echo 'The local Ollama API does not list dolphin-mistral.'
+          echo "$LOCAL_TAGS" | grep -q 'eriktonon/bonsai-2-uncensored:27b' || {
+            echo 'The local Ollama API does not list eriktonon/bonsai-2-uncensored:27b.'
             exit 1
           }
 
@@ -140,7 +140,7 @@ jobs:
             HTTP_CODE=$(curl --connect-timeout 5 --max-time 15 --retry 1 --retry-all-errors --retry-delay 2 \
               -sS -o /tmp/public-tags.json -w '%{http_code}' \
               "$TUNNEL_URL/api/tags" || true)
-            if [ "$HTTP_CODE" = '200' ] && grep -q 'dolphin-mistral' /tmp/public-tags.json; then
+            if [ "$HTTP_CODE" = '200' ] && grep -q 'eriktonon/bonsai-2-uncensored:27b' /tmp/public-tags.json; then
               HEALTHY=1
               break
             fi
@@ -154,10 +154,10 @@ jobs:
             cat ollama.log || true
             exit 1
           fi
-          echo 'PASS: public HTTPS /api/tags returned dolphin-mistral.'
+          echo 'PASS: public HTTPS /api/tags returned eriktonon/bonsai-2-uncensored:27b.'
 
           # Test the exact text/plain POST used by index.html and a GitHub Pages Origin.
-          CHAT_REQUEST='{"model":"dolphin-mistral","messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false}'
+          CHAT_REQUEST='{"model":"eriktonon/bonsai-2-uncensored:27b","messages":[{"role":"user","content":"Reply with the single word OK."}],"stream":false}'
           rm -f /tmp/public-chat.json /tmp/public-chat.headers
           CHAT_CODE=$(curl --connect-timeout 5 --max-time 240 -sS \
             -D /tmp/public-chat.headers -o /tmp/public-chat.json -w '%{http_code}' \

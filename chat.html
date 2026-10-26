@@ -33,7 +33,7 @@ async function loadCurrentEndpoint(){
   const r=await fetch(configUrl.href,{cache:'no-store',headers:{'Cache-Control':'no-cache'}});
   if(!r.ok)throw Error('Could not load current chat configuration (HTTP '+r.status+')');
   const html=await r.text();
-  const match=html.match(/const PUBLISHED_API_URL\\s*=\\s*"(https:\\/\\/[^"]+\\.trycloudflare\\.com)";/);
+  const match=html.match(/const PUBLISHED_API_URL.*"(https:\/\/[^"]+\.trycloudflare\.com)";/);
   if(!match)throw Error('No published tunnel URL found in the current page configuration');
   API_URL=match[1];
 }

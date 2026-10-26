@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Dolphin Mistral Chat</title>
+<title>Bonsai 2 Uncensored 27B Chat</title>
 <style>
 :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;font:16px system-ui,-apple-system,Segoe UI,sans-serif;background:#f6f7f9;color:#16181d;display:flex;flex-direction:column;height:100dvh}
 header{padding:16px;text-align:center;background:#fff;border-bottom:1px solid #ddd}h1{font-size:20px;margin:0}#status{font-size:13px;color:#666;margin-top:5px}
@@ -15,12 +15,12 @@ form{padding:14px;background:#fff;border-top:1px solid #ddd;display:flex;gap:8px
 </style>
 </head>
 <body>
-<header><h1>Dolphin Mistral Chat</h1><div id="status">Connecting to the current temporary model server…</div></header>
+<header><h1>Bonsai 2 Uncensored 27B Chat</h1><div id="status">Connecting to the current temporary model server…</div></header>
 <main id="chat"><div class="msg bot">Connecting to Dolphin Mistral. This page automatically loads the latest endpoint and retries if the tunnel is still starting.</div></main>
 <form id="form"><input id="prompt" autocomplete="off" placeholder="Message Dolphin Mistral…" disabled><button id="send" disabled>Send</button></form>
 <div id="foot">Temporary session · Do not enter passwords, secrets, or sensitive personal data.</div>
 <script>
-const MODEL='dolphin-mistral';
+const MODEL='eriktonon/bonsai-2-uncensored:27b';
 const chat=document.querySelector('#chat'),input=document.querySelector('#prompt'),send=document.querySelector('#send'),status=document.querySelector('#status');
 let API_URL='',busy=false,checking=false;
 const messages=[];

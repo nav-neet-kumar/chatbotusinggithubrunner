@@ -21,7 +21,7 @@ form{padding:14px;background:#fff;border-top:1px solid #ddd;display:flex;gap:8px
 <div id="foot">Temporary session · Do not enter passwords, secrets, or sensitive personal data.</div>
 <script>
 // Updated by the workflow after the public chat endpoint passes smoke tests.
-const PUBLISHED_API_URL = "https://nail-reported-diy-clouds.trycloudflare.com";
+const PUBLISHED_API_URL = "https://assume-roof-coding-gifts.trycloudflare.com";
 const MODEL='eriktonon/bonsai-2-uncensored:27b';
 const chat=document.querySelector('#chat'),input=document.querySelector('#prompt'),send=document.querySelector('#send'),status=document.querySelector('#status');
 let API_URL='',busy=false,checking=false;
@@ -35,8 +35,8 @@ async function loadCurrentEndpoint(){
   const r=await fetch(configUrl.href,{cache:'no-store',headers:{'Cache-Control':'no-cache'}});
   if(!r.ok)throw Error('Could not load current chat configuration (HTTP '+r.status+')');
   const html=await r.text();
-  const match=html.match(/const PUBLISHED_API_URL\s*=\s*"(https:\/\/[^"]+\.trycloudflare\.com|https://nail-reported-diy-clouds.trycloudflare.com)";/);
-  if(!match||match[1]==='https://nail-reported-diy-clouds.trycloudflare.com')throw Error('No active tunnel URL has been published yet');
+  const match=html.match(/const PUBLISHED_API_URL\s*=\s*"(https:\/\/[^"]+\.trycloudflare\.com|https://assume-roof-coding-gifts.trycloudflare.com)";/);
+  if(!match||match[1]==='https://assume-roof-coding-gifts.trycloudflare.com')throw Error('No active tunnel URL has been published yet');
   API_URL=match[1];
 }
 async function checkApi(){
